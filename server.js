@@ -180,6 +180,7 @@ app.post('/api/payment-verify', async (req, res) => {
       await orderRef.update({
         paymentStatus: "confirmed",
         orderStatus: "cancelled",
+        razorpayPaymentId: razorpay_payment_id,
         cancellationReason: "Insufficient stock",
       });
 
@@ -199,11 +200,13 @@ app.post('/api/payment-verify', async (req, res) => {
     }
 
     // Payment and order confirmed successfully
-    await orderRef.update({
-      paymentStatus: "confirmed",
-      orderStatus: "confirmed",
-    });
-
+// After signature verification and stock decrement success
+await orderRef.update({
+    paymentStatus: "confirmed",
+    orderStatus: "confirmed",
+    razorpayPaymentId: razorpay_payment_id,
+  });
+  
     return res.status(200).json({
       status: "success",
       message: "Payment and order confirmed successfully",
