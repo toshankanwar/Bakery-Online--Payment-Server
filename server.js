@@ -184,7 +184,7 @@ app.post('/api/payment-verify', async (req, res) => {
         cancellationReason: "Insufficient stock",
       });
 
-      const paymentAmount = orderData.amount || 0;
+      const paymentAmount = orderData.total || 0;
       try {
         await refundPayment(razorpay_payment_id, paymentAmount * 100, orderData.currency || "INR");
         console.log(`Refund successful for paymentId: ${razorpay_payment_id}`);
