@@ -24,7 +24,7 @@ const razorpay = new Razorpay({
   key_secret: RAZORPAY_KEY_SECRET,
 });
 
-// Enable CORS for all domains or restrict using FRONTEND_ORIGIN variable
+// Enable CORS for your frontend domain or all
 app.use(cors({
   origin: process.env.FRONTEND_ORIGIN || '*',
   methods: ['GET', 'POST'],
@@ -200,13 +200,12 @@ app.post('/api/payment-verify', async (req, res) => {
     }
 
     // Payment and order confirmed successfully
-// After signature verification and stock decrement success
-await orderRef.update({
-    paymentStatus: "confirmed",
-    orderStatus: "confirmed",
-    razorpayPaymentId: razorpay_payment_id,
-  });
-  
+    await orderRef.update({
+      paymentStatus: "confirmed",
+      orderStatus: "confirmed",
+      razorpayPaymentId: razorpay_payment_id,
+    });
+
     return res.status(200).json({
       status: "success",
       message: "Payment and order confirmed successfully",
@@ -222,6 +221,26 @@ await orderRef.update({
 
 // Optional health check route
 app.get('/', (req, res) => res.send('Backend server running!'));
+
+// --- Keep-alive self ping to prevent free tier from sleeping ---
+function selfPing() {
+  const publicUrl = "https://bakery-online-payment-server.onrender.com/";
+  fetch(publicUrl)
+    .then(res => {
+      if (res.ok) {
+        console.log(`[KEEP-ALIVE] Self-ping successful at ${new Date().toLocaleString()}`);
+      } else {
+        console.warn(`[KEEP-ALIVE] Self-ping responded with status ${res.status}`);
+      }
+    })
+    .catch(err => {
+      console.error('[KEEP-ALIVE] Self-ping failed:', err);
+    });
+}
+
+// Ping every 9 minutes (Render sleeps after 15 minutes of inactivity)
+setInterval(selfPing, 9 * 60 * 1000);
+setTimeout(selfPing, 10 * 1000);
 
 // Start server
 app.listen(PORT, () => {
