@@ -220,7 +220,7 @@ app.post('/api/payment-verify', async (req, res) => {
 });
 
 // Optional health check route
-app.get('/', (req, res) => res.send('Backend server running!'));
+app.get('/', (req, res) => res.send(' Payment Backend server running! for Toshan bakery'));
 
 // --- Keep-alive self ping to prevent free tier from sleeping ---
 function selfPing() {
