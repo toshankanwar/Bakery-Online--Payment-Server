@@ -239,7 +239,7 @@ function selfPing() {
 }
 
 // Ping every 9 minutes (Render sleeps after 15 minutes of inactivity)
-setInterval(selfPing, 9 * 60 * 1000);
+setInterval(selfPing, 14 * 60 * 1000);
 setTimeout(selfPing, 10 * 1000);
 
 // Start server
