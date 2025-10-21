@@ -219,7 +219,7 @@ app.get('/', (req, res) => res.send('Payment Backend server running! for Toshan 
 
 // Keep-alive self ping function stays same
 function selfPing() {
-  const publicUrl = process.env.SERVER_PUBLIC_URL || "https://bakery-online-payment-server.onrender.com/";
+  const publicUrl = process.env.SERVER_PUBLIC_URL;
   fetch(publicUrl)
     .then(res => {
       if (res.ok) {
