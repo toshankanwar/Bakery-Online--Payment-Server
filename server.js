@@ -8,38 +8,48 @@ import dotenv from 'dotenv';
 
 import { db, admin } from './firebaseAdmin.js';  // Your Firebase Admin SDK init here
 
-// Load environment variables from .env
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-// Use environment variables for Razorpay keys (make sure defined in your .env)
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_live_7p3V38KUQoolpn";
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "YiI6F57QxpxzkDy2BlDXiFrL";
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
-// Initialize Razorpay client
+if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+  console.error('Razorpay keys missing in environment variables');
+  process.exit(1);
+}
+
 const razorpay = new Razorpay({
   key_id: RAZORPAY_KEY_ID,
   key_secret: RAZORPAY_KEY_SECRET,
 });
 
-// Enable CORS for your frontend domain or all
+// Restrict CORS to only bakery domain
 app.use(cors({
-  origin: process.env.FRONTEND_ORIGIN || '*',
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+
+    const allowedOrigin = 'https://bakery.toshankanwar.website';
+    if (origin === allowedOrigin) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
+
 app.use(bodyParser.json());
 
-// Helper function - Refund Razorpay payment
+// Refund function remains unchanged
 async function refundPayment(paymentId, amount, currency = "INR") {
   const refundUrl = `https://api.razorpay.com/v1/payments/${paymentId}/refund`;
-  const body = {
-    amount, // amount in paise
-    speed: "normal",
-  };
+  const body = { amount, speed: "normal" };
   const authString = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString('base64');
 
   const resp = await fetch(refundUrl, {
@@ -58,60 +68,64 @@ async function refundPayment(paymentId, amount, currency = "INR") {
   return await resp.json();
 }
 
-// Internal Firestore transaction to confirm order and decrement stock
-async function confirmOrderAndDecrementStock(orderDocId, paymentStatus, orderItems) {
-  const result = await db.runTransaction(async (transaction) => {
-    const orderRef = db.collection('orders').doc(orderDocId);
-    const orderSnap = await transaction.get(orderRef);
-    if (!orderSnap.exists) {
-      throw new Error('Order not found');
+// Check stock availability function
+async function checkStockAvailability(orderItems) {
+  for (const item of orderItems) {
+    const itemRef = db.collection('bakeryItems').doc(item.id);
+    const snap = await itemRef.get();
+    if (!snap.exists) {
+      return { available: false, message: `Item with id ${item.id} not found` };
     }
-
-    const itemDocs = [];
-    for (const item of orderItems) {
-      const itemRef = db.collection('bakeryItems').doc(item.id);
-      const itemSnap = await transaction.get(itemRef);
-      if (!itemSnap.exists) {
-        throw new Error(`Bakery item ${item.id} not found`);
-      }
-      itemDocs.push({ ref: itemRef, snap: itemSnap, qtyToDecrement: item.quantity });
+    const currentQty = snap.data().quantity ?? 0;
+    if (currentQty < item.quantity) {
+      return { available: false, message: `Item ${item.id} out of stock` };
     }
-
-    // Check stock availability
-    for (const { snap, qtyToDecrement } of itemDocs) {
-      const currentQty = Number(snap.data().quantity) ?? 0;
-      if (currentQty < qtyToDecrement) {
-        return { success: false, insufficientItemId: snap.id };
-      }
-    }
-
-    // All stock sufficient; update order & decrement stock atomically
-    transaction.update(orderRef, {
-      orderStatus: 'confirmed',
-      paymentStatus,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    for (const { ref, snap, qtyToDecrement } of itemDocs) {
-      const currentQty = Number(snap.data().quantity) ?? 0;
-      transaction.update(ref, { quantity: currentQty - qtyToDecrement });
-    }
-
-    return { success: true };
-  });
-
-  return result;
+  }
+  return { available: true };
 }
 
-// Endpoint: Create Razorpay Payment Order
+// Optimistically decrement stock before payment
+async function decrementStock(orderItems) {
+  const batch = db.batch();
+  for (const item of orderItems) {
+    const itemRef = db.collection('bakeryItems').doc(item.id);
+    batch.update(itemRef, { quantity: admin.firestore.FieldValue.increment(-item.quantity) });
+  }
+  await batch.commit();
+}
+
+// Restock items if payment fails/cancelled
+async function restockItems(orderItems) {
+  const batch = db.batch();
+  for (const item of orderItems) {
+    const itemRef = db.collection('bakeryItems').doc(item.id);
+    batch.update(itemRef, { quantity: admin.firestore.FieldValue.increment(item.quantity) });
+  }
+  await batch.commit();
+}
+
+// Endpoint: Create Razorpay Payment Order - Now checks stock first and decrements stock if available
 app.post('/api/payment-order', async (req, res) => {
   try {
-    const { amount } = req.body;
+    const { amount, orderItems } = req.body;
 
     if (!amount || typeof amount !== "number" || amount <= 0) {
       return res.status(400).json({ error: "Amount is required and must be a positive number." });
     }
+    if (!Array.isArray(orderItems) || orderItems.length === 0) {
+      return res.status(400).json({ error: "Order items are required." });
+    }
 
+    // Check stock availability
+    const stockCheck = await checkStockAvailability(orderItems);
+    if (!stockCheck.available) {
+      return res.status(400).json({ error: stockCheck.message || "Out of stock" });
+    }
+
+    // Decrement stock optimistically before payment window shown
+    await decrementStock(orderItems);
+
+    // Create Razorpay order
     const paymentOrder = await razorpay.orders.create({
       amount,
       currency: "INR",
@@ -125,7 +139,7 @@ app.post('/api/payment-order', async (req, res) => {
   }
 });
 
-// Endpoint: Verify Payment and Confirm Order
+// Endpoint: Verify Payment and Confirm Order - update to restock if payment cancelled or failed
 app.post('/api/payment-verify', async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderDocId } = req.body || {};
@@ -134,15 +148,23 @@ app.post('/api/payment-verify', async (req, res) => {
       return res.status(400).json({ status: "error", error: "Missing required fields" });
     }
 
-    // Verify Razorpay signature
     const generated_signature = crypto
       .createHmac("sha256", RAZORPAY_KEY_SECRET)
       .update(razorpay_order_id + "|" + razorpay_payment_id)
       .digest("hex");
 
     if (generated_signature !== razorpay_signature) {
-      // Signature mismatch: cancel payment and order in Firestore
+      // Signature mismatch: cancel payment and order in Firestore and restock items
       const orderRef = db.collection("orders").doc(orderDocId);
+      const orderSnap = await orderRef.get();
+      if (orderSnap.exists) {
+        const orderData = orderSnap.data();
+        const orderItems = (orderData.items || []).map(item => ({
+          id: item.productId || item.id,
+          quantity: item.quantity,
+        }));
+        await restockItems(orderItems);
+      }
       await orderRef.update({
         paymentStatus: "cancelled",
         orderStatus: "cancelled",
@@ -154,7 +176,6 @@ app.post('/api/payment-verify', async (req, res) => {
       });
     }
 
-    // Signature valid: get order document
     const orderRef = db.collection("orders").doc(orderDocId);
     const orderSnap = await orderRef.get();
 
@@ -166,40 +187,14 @@ app.post('/api/payment-verify', async (req, res) => {
     }
     const orderData = orderSnap.data();
 
-    // Prepare orderItems for decrement stock
     const orderItems = (orderData.items || []).map(item => ({
       id: item.productId || item.id,
       quantity: item.quantity,
     }));
 
-    // Confirm order and decrement stock
-    const confirmResult = await confirmOrderAndDecrementStock(orderDocId, "confirmed", orderItems);
+    // No need to check stock again or decrement here, assumed done before payment
 
-    if (!confirmResult.success) {
-      // Insufficient stock: update order as cancelled and refund payment
-      await orderRef.update({
-        paymentStatus: "confirmed",
-        orderStatus: "cancelled",
-        razorpayPaymentId: razorpay_payment_id,
-        cancellationReason: "Insufficient stock",
-      });
-
-      const paymentAmount = orderData.total || 0;
-      try {
-        await refundPayment(razorpay_payment_id, paymentAmount * 100, orderData.currency || "INR");
-        console.log(`Refund successful for paymentId: ${razorpay_payment_id}`);
-      } catch (refundError) {
-        console.error("Refund failed:", refundError);
-      }
-
-      return res.status(200).json({
-        status: "payment_confirmed_order_cancelled",
-        message: "Payment confirmed but order cancelled due to insufficient stock. Refund initiated.",
-        insufficientItemId: confirmResult.insufficientItemId || null,
-      });
-    }
-
-    // Payment and order confirmed successfully
+    // Confirm order
     await orderRef.update({
       paymentStatus: "confirmed",
       orderStatus: "confirmed",
@@ -220,11 +215,11 @@ app.post('/api/payment-verify', async (req, res) => {
 });
 
 // Optional health check route
-app.get('/', (req, res) => res.send(' Payment Backend server running! for Toshan bakery'));
+app.get('/', (req, res) => res.send('Payment Backend server running! for Toshan bakery'));
 
-// --- Keep-alive self ping to prevent free tier from sleeping ---
+// Keep-alive self ping function stays same
 function selfPing() {
-  const publicUrl = "https://bakery-online-payment-server.onrender.com/";
+  const publicUrl = process.env.SERVER_PUBLIC_URL || "https://bakery-online-payment-server.onrender.com/";
   fetch(publicUrl)
     .then(res => {
       if (res.ok) {
@@ -238,11 +233,10 @@ function selfPing() {
     });
 }
 
-// Ping every 9 minutes (Render sleeps after 15 minutes of inactivity)
-setInterval(selfPing, 9 * 60 * 1000);
+setInterval(selfPing, 14 * 60 * 1000);
 setTimeout(selfPing, 10 * 1000);
 
-// Start server
 app.listen(PORT, () => {
   console.log(`Server listening on port ${PORT}`);
 });
+
