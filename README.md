@@ -2,7 +2,6 @@
 
 This is the official backend **payment server** for the [Toshan Bakery Management & E-commerce](https://github.com/toshankanwar/bakery-management-and-ecommerce) project. It handles **Razorpay-based online transactions**, payment verification, **order confirmation**, **stock decrement**, and **auto-refund** for stock mismatch cases. Built with Node.js, Express, Firebase, and hosted on Render.
 
-🌐 **Live API**: [https://bakery-online-payment-server.onrender.com](https://bakery-online-payment-server.onrender.com)  
 📧 **Contact**: [contact@toshankanwar.website](mailto:contact@toshankanwar.website)  
 🐙 **Main Bakery Repo**: [Bakery E-commerce Platform](https://github.com/toshankanwar/bakery-management-and-ecommerce)
 

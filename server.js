@@ -21,7 +21,8 @@ const PORT = process.env.PORT || 5001;
 // Use environment variables for Razorpay keys (make sure defined in your .env)
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-
+// Access env variable in backend node environment
+const publicUrl = process.env.SERVER_PUBLIC_URL;
 
 // Initialize Razorpay client
 const razorpay = new Razorpay({
@@ -36,8 +37,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
 
     const allowedOrigins = [
-      'https://bakery.toshankanwar.website',       // Your frontend domain
-      'https://bakery-online-payment-server.onrender.com'  // Your backend self-ping URL
+      'https://bakery.toshankanwar.website'  // Your backend self-ping URL
     ];
 
     if (allowedOrigins.includes(origin)) {
@@ -275,20 +275,18 @@ app.get('/', (req, res) => res.send(' Payment Backend server running! for Toshan
 
 // --- Keep-alive self ping to prevent free tier from sleeping ---
 function selfPing() {
-  const publicUrl = "https://bakery-online-payment-server.onrender.com/";
-  fetch(publicUrl)
-    .then(res => {
-      if (res.ok) {
-        console.log(`[KEEP-ALIVE] Self-ping successful at ${new Date().toLocaleString()}`);
-      } else {
-        console.warn(`[KEEP-ALIVE] Self-ping responded with status ${res.status}`);
-      }
-    })
-    .catch(err => {
-      console.error('[KEEP-ALIVE] Self-ping failed:', err);
-    });
+  fetch(publicUrl)
+    .then(res => {
+      if (res.ok) {
+        console.log(`[KEEP-ALIVE] Self-ping successful at ${new Date().toLocaleString()}`);
+      } else {
+        console.warn(`[KEEP-ALIVE] Self-ping responded with status ${res.status}`);
+      }
+    })
+    .catch(err => {
+      console.error('[KEEP-ALIVE] Self-ping failed:', err);
+    });
 }
-
 
 // Ping every 9 minutes (Render sleeps after 15 minutes of inactivity)
 setInterval(selfPing, 14 * 60 * 1000);
